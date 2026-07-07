@@ -4,7 +4,7 @@ import argparse
 import math
 import os
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 def distance(p1, p2):
     return math.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
@@ -14,8 +14,8 @@ from belt_detection import BeltROI, BeltDetector
 
 @dataclass
 class AutoROIConfig:
-    rail_hsv_lo: np.ndarray = np.array([10, 40, 40]) # broadened for night/dark video rails
-    rail_hsv_hi: np.ndarray = np.array([45, 255, 255])
+    rail_hsv_lo: np.ndarray = field(default_factory=lambda: np.array([10, 40, 40])) # broadened for night/dark video rails
+    rail_hsv_hi: np.ndarray = field(default_factory=lambda: np.array([45, 255, 255]))
     roi_min_points: int = 15
     roi_halfwidth_frac: float = 0.15  # Tighter bounding box around the rails
     roi_hypo_band_frac: float = 0.05
