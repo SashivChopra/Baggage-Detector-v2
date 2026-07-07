@@ -11,6 +11,7 @@ def distance(p1, p2):
 
 
 from belt_detection import BeltROI, BeltDetector
+from belt_type_classifier import BeltTypeClassifier, BeltType
 
 @dataclass
 class AutoROIConfig:
@@ -110,7 +111,14 @@ class TrackedObject:
 def run_status_detector(video_path, min_area=200, max_area=7000, max_distance=60,
                         sustained_secs=2, belt_angle=None, angle_threshold=20,
                         var_threshold=16, use_clahe=False, brightness_gamma=1.0, max_missing=15,
-                        roi_str=None):
+                        roi_str=None, save_roof_overlays=False):
+    # Belt type classifier initialized; classification deferred until belt connects
+    belt_classifier = BeltTypeClassifier()
+    belt_type = BeltType.UNKNOWN
+    belt_classified = False
+    belt_connected = False
+
+    # ── STAGE 2 & 3: Auto ROI + Status Detection ─────────────────────────
     print(f"Running Status Detector on {video_path}")
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -209,8 +217,11 @@ def run_status_detector(video_path, min_area=200, max_area=7000, max_distance=60
                     'conv_full_D01.mp4': '47,167 405,109 422,216 65,275',
                     'conv_full_D02.mp4': '61,112 300,76 258,4 50,66',
                     'conv_full_D03.mp4': '61,112 300,76 258,4 50,66',
+                    'conv_full_D04.mp4': '36,58 300,58 300,208 36,208',
                     'conv_full_N01.mp4': '38,131 191,55 165,30 21,98',
+                    'conv_full_N02.mp4': '4,40 364,62 364,259 2,305',
                     'conv_full_N03.mp4': '12,143 166,73 137,39 3,101',
+                    'conv_full_N04.mp4': '0,41 241,42 239,143 0,143',
                 }
                 if video_filename in default_rois:
                     print(f"Using perfectly aligned default ROI for {video_filename}!")
@@ -227,6 +238,7 @@ def run_status_detector(video_path, min_area=200, max_area=7000, max_distance=60
             
             if roi_poly is not None:
                 current_belt_roi = polygon_to_belt_roi(roi_poly)
+                belt_connected = True
                 
                 # Only lock the ROI if the user explicitly provided it via command line
                 if roi_str is not None:
@@ -243,15 +255,17 @@ def run_status_detector(video_path, min_area=200, max_area=7000, max_distance=60
                 print("No manual ROI selected. Automatic detection enabled.")
 
         # --- PERIODIC AUTO ROI ---
-        if not manual_roi_locked and t >= next_redetect_t:
+        if not manual_roi_locked and (not belt_connected or t >= next_redetect_t):
             roi_buffer.append(frame.copy())
             if len(roi_buffer) >= belt_detector.cfg.roi_sample_frames:
+                sample_frames_for_class = list(roi_buffer)
                 new_belt = belt_detector.detect(roi_buffer, previous=current_belt_roi)
                 roi_buffer = []
                 next_redetect_t = t + 10.0  # Force 10 second update
                 
                 if new_belt is not None:
                     current_belt_roi = new_belt
+                    belt_connected = True
                     roi_poly = current_belt_roi.box_points().astype(np.int32)
                     roi_mask = np.zeros(frame.shape[:2], dtype=np.uint8)
                     cv2.fillPoly(roi_mask, [roi_poly], 255)
@@ -262,6 +276,36 @@ def run_status_detector(video_path, min_area=200, max_area=7000, max_distance=60
                 else:
                     if current_belt_roi is None and frame_count < fps * 2:
                         print("Initial auto-detection failed, will retry...")
+
+        # --- CHECK IF BELT IS ROOFED OR OPEN ONCE CONNECTED ---
+        if belt_connected and not belt_classified and current_belt_roi is not None:
+            print(f"[pipeline] Belt connected! Running Stage 1: Classifying belt type...")
+            classification = belt_classifier.classify_from_roi(
+                sample_frames_for_class if 'sample_frames_for_class' in locals() and sample_frames_for_class else [frame],
+                current_belt_roi,
+                video_path,
+                save_overlays=save_roof_overlays
+            )
+            belt_type = classification.belt_type
+            belt_classified = True
+            print(f"[pipeline] Belt type: {belt_type.value} (confidence={classification.confidence:.2f})")
+            if belt_type == BeltType.ROOFED:
+                print("[pipeline] Roofed belt detected — using roofed-optimised parameters.")
+                if var_threshold > 12:
+                    var_threshold = max(12, var_threshold)
+                    backSub.setVarThreshold(var_threshold)
+            elif belt_type == BeltType.OPEN:
+                print("[pipeline] Open belt detected — using open-belt parameters.")
+
+        # --- WAIT FOR BELT TO CONNECT BEFORE STATUS DETECTION ---
+        if not belt_connected or current_belt_roi is None:
+            # We do not count baggage or change status until the conveyor belt is connected!
+            cv2.putText(frame, "STATUS: WAITING FOR BELT...", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 165, 255), 3)
+            cv2.imshow("Conveyor Belt Status Detector", frame)
+            if cv2.waitKey(frame_delay) & 0xFF == ord('q'):
+                break
+            frame_count += 1
+            continue
 
         # Apply Gamma Correction for night videos
         if gamma_lut is not None:
@@ -624,6 +668,8 @@ if __name__ == '__main__':
                         help="Gamma correction for night videos. >1.0 makes dark areas brighter (e.g. 1.5 to 2.0). Default 1.0.")
     parser.add_argument('--roi', type=str, default=None,
                         help="Optional exact 4-point polygon ROI as 'X1,Y1 X2,Y2 X3,Y3 X4,Y4'")
+    parser.add_argument('--save_roof_overlays', action='store_true',
+                        help="Save diagnostic overlay images from belt type classification to roof_detection_output/")
     args = parser.parse_args()
 
     run_status_detector(
@@ -638,4 +684,5 @@ if __name__ == '__main__':
         brightness_gamma=args.brightness_gamma,
         max_missing=args.max_missing,
         roi_str=args.roi,
+        save_roof_overlays=args.save_roof_overlays,
     )
