@@ -4,6 +4,7 @@ videos/
 # Generated output
 output_frames/
 pipeline_output/
+roof_detection_output/
 
 # macOS
 .DS_Store
