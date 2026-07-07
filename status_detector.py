@@ -153,6 +153,11 @@ def run_status_detector(video_path, min_area=200, max_area=7000, max_distance=60
     event_count = 0
     print(f"Events will be logged to: {events_csv}")
 
+    # Event merge: suppress duplicate events of the same type within this gap
+    EVENT_MERGE_GAP_SECS = 10.0
+    last_event_time = {}   # {"LOADING": timestamp, "UNLOADING": timestamp}
+    last_event_id = {}     # {"LOADING": event_count, "UNLOADING": event_count}
+
     raw_events = []
 
     # Variables for periodic auto-ROI
@@ -522,15 +527,27 @@ def run_status_detector(video_path, min_area=200, max_area=7000, max_distance=60
                 
         # ── Event detection: IDLE → LOADING / UNLOADING ──────────────────
         if prev_status == "IDLE" and status in ("LOADING", "UNLOADING"):
-            event_count += 1
             ts_str = f"{int(video_secs//3600):02d}:{int((video_secs%3600)//60):02d}:{video_secs%60:05.2f}"
-            event_snapshot = os.path.join(event_dir, f"event_{event_count:03d}_{status}_{ts_str.replace(':','').replace('.','')}.jpg")
-            cv2.imwrite(event_snapshot, frame)
             
-            print(f"[EVENT #{event_count}] {status} started at {ts_str} (frame {frame_count}) → {event_snapshot}")
-            
-            with open(events_csv, 'a') as f:
-                f.write(f"{event_count},{status},{ts_str},{frame_count},{event_snapshot}\n")
+            # Check if this should be merged with a recent event of the same type
+            prev_t = last_event_time.get(status, -999)
+            if (video_secs - prev_t) < EVENT_MERGE_GAP_SECS:
+                # Merge: same type fired within the gap — skip creating a new event
+                print(f"[EVENT] {status} at {ts_str} merged into event #{last_event_id[status]} (within {EVENT_MERGE_GAP_SECS}s gap)")
+                last_event_time[status] = video_secs
+            else:
+                # New distinct event
+                event_count += 1
+                event_snapshot = os.path.join(event_dir, f"event_{event_count:03d}_{status}_{ts_str.replace(':','').replace('.','')}.jpg")
+                cv2.imwrite(event_snapshot, frame)
+                
+                print(f"[EVENT #{event_count}] {status} started at {ts_str} (frame {frame_count}) → {event_snapshot}")
+                
+                with open(events_csv, 'a') as f:
+                    f.write(f"{event_count},{status},{ts_str},{frame_count},{event_snapshot}\n")
+                
+                last_event_time[status] = video_secs
+                last_event_id[status] = event_count
 
         prev_status = status
         # ─────────────────────────────────────────────────────────────────
