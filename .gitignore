@@ -1,0 +1,29 @@
+# Videos (too large for GitHub)
+videos/
+
+# Generated output
+output_frames/
+pipeline_output/
+
+# Scratch/debug files
+scratch/
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
+
+# Logs and HTML reports
+*.html
+*.log
+sashiv_engineering_log.*
+
+# PDF reports
+*.pdf
