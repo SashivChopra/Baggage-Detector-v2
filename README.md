@@ -231,12 +231,12 @@ python3 status_detector.py --video videos/<your_video>.mp4 --show_video
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `--video` | str | **Required** | Path to the input video file |
-| `--min_area` | int | `800` | Minimum contour area (px). Smaller objects are ignored (noise, hands, artifacts) |
-| `--max_area` | int | `25000` | Maximum contour area (px). Larger objects are ignored (full human bodies) |
-| `--sustained_secs` | float | `1.5` | Seconds an object must be **continuously tracked** before being counted. Higher = fewer false positives |
-| `--belt_angle` | float | `30.0` | Expected physical rotation angle of bags on the belt (degrees). 0° = horizontal |
+| `--min_area` | int | `200` | Minimum contour area (px). Smaller objects are ignored (noise, hands, artifacts) |
+| `--max_area` | int | `10000` | Maximum contour area (px). Larger objects are ignored (full human bodies) |
+| `--sustained_secs` | float | `2.5` | Seconds an object must be **continuously tracked** before being counted. Higher = fewer false positives |
+| `--belt_angle` | float | `0` | Expected physical rotation angle of bags on the belt (degrees). 0° = horizontal |
 | `--angle_threshold` | float | `20` | Max allowed deviation from `belt_angle`. Set to `90` to disable angle filtering entirely |
-| `--var_threshold` | int | `16` | MOG2 sensitivity. **Lower = more sensitive.** Use `4–8` for dark bags, night footage, or glass-covered belts |
+| `--var_threshold` | int | `8` | MOG2 sensitivity. **Lower = more sensitive.** Use `4–8` for dark bags, night footage, or glass-covered belts |
 | `--max_missing` | int | `15` | Max consecutive frames a tracked bag can disappear before the tracker drops it. Raise for railing-heavy or glass-covered belts |
 | `--use_clahe` | flag | `false` | Apply CLAHE contrast enhancement before detection. Essential for dark bags on dark belts |
 | `--brightness_gamma` | float | `1.0` | Gamma correction multiplier. Values > 1.0 brighten dark areas. Use `1.5`–`2.0` for night footage |
