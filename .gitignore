@@ -27,3 +27,7 @@ sashiv_engineering_log.*
 
 # PDF reports
 *.pdf
+
+# Virtual environments
+.venv/
+venv/

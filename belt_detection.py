@@ -189,6 +189,12 @@ class BeltDetector:
         yellow = self._rail_color_evidence(bgr)
         py = cv2.findNonZero(yellow)
         py = py.reshape(-1, 2).astype(np.float32) if py is not None else None
+        
+        pm = None
+        if motion_history is not None:
+            pm_idx = cv2.findNonZero((motion_history > 30).astype(np.uint8))
+            pm = pm_idx.reshape(-1, 2).astype(np.float32) if pm_idx is not None else None
+
         segs = self._line_segments(bgr)
         h, w = bgr.shape[:2]
         band = self.cfg.roi_hypo_band_frac * w      # co-linearity tolerance
@@ -221,8 +227,16 @@ class BeltDetector:
             if py is not None:
                 near = self._near_line(py, p1, p2, band)
                 yellow_px = int(np.count_nonzero(near))
+                
+            # motion verification: moving objects along this line strongly indicate a belt
+            motion_px = 0
+            if pm is not None:
+                near_m = self._near_line(pm, p1, p2, band)
+                motion_px = int(np.count_nonzero(near_m))
+                
             score = (support_px
                      + 0.8 * min(yellow_px, 2 * w)
+                     + 1.5 * min(motion_px, 3 * w)
                      + 0.25 * ((sy1 + sy2) / 2.0 / h) * w)  # reward lower-in-frame edges (prefer belt over canopy)
             # continuity prior: damp round-to-round flip-flopping between
             # parallel structures (lower rail vs. canopy edge) by favoring

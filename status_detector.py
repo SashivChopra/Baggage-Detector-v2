@@ -3,19 +3,94 @@ import numpy as np
 import argparse
 import math
 import os
-from collections import deque
-from dataclasses import dataclass
+from collections import deque, defaultdict
+from dataclasses import dataclass, field
+from typing import List, Dict
+import csv
 
 def distance(p1, p2):
     return math.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
 
 
+def filter_events(events: List[Dict], window_size_seconds: float = 30.0, min_detections_in_window: int = 2, merge_gap_seconds: float = 15.0) -> List[Dict]:
+    """
+    Takes raw event list and returns cleaned start/end times.
+    
+    The sliding window moves across the timeline in steps. At each position,
+    if the window contains >= min_detections_in_window detections of the same
+    type, that window is "confirmed". Consecutive confirmed windows separated
+    by less than merge_gap_seconds are merged into a single event.
+    """
+    if not events:
+        return []
+
+    events_by_type = defaultdict(list)
+    for ev in events:
+        events_by_type[ev["event_type"]].append(float(ev["timestamp"]))
+
+    all_filtered = []
+
+    for event_type, timestamps in events_by_type.items():
+        timestamps.sort()
+        if not timestamps:
+            continue
+
+        confirmed_intervals = []
+        t_start = timestamps[0]
+        t_end = timestamps[-1]
+
+        step = 1.0  # 1-second step
+        pos = t_start
+
+        while pos <= t_end:
+            window_end = pos + window_size_seconds
+            count = sum(1 for t in timestamps if pos <= t <= window_end)
+
+            if count >= min_detections_in_window:
+                detections_in_window = [t for t in timestamps if pos <= t <= window_end]
+                interval_start = detections_in_window[0]
+                interval_end = detections_in_window[-1]
+                confirmed_intervals.append((interval_start, interval_end, count))
+
+            pos += step
+
+        if not confirmed_intervals:
+            continue
+
+        confirmed_intervals.sort(key=lambda x: x[0])
+        merged = []
+        current_start, current_end, current_count = confirmed_intervals[0]
+
+        for i in range(1, len(confirmed_intervals)):
+            next_start, next_end, next_count = confirmed_intervals[i]
+            if next_start - current_end <= merge_gap_seconds:
+                current_end = max(current_end, next_end)
+                current_count = max(current_count, next_count)
+            else:
+                merged.append((current_start, current_end, current_count))
+                current_start, current_end, current_count = next_start, next_end, next_count
+
+        merged.append((current_start, current_end, current_count))
+
+        for m_start, m_end, _ in merged:
+            actual_count = sum(1 for t in timestamps if m_start <= t <= m_end)
+            all_filtered.append({
+                'start_time': m_start,
+                'end_time': m_end,
+                'event_type': event_type,
+                'detection_count': actual_count,
+            })
+
+    all_filtered.sort(key=lambda x: x['start_time'])
+    return all_filtered
+
 from belt_detection import BeltROI, BeltDetector
+from belt_type_classifier import BeltTypeClassifier, BeltType
 
 @dataclass
 class AutoROIConfig:
-    rail_hsv_lo: np.ndarray = np.array([10, 40, 40]) # broadened for night/dark video rails
-    rail_hsv_hi: np.ndarray = np.array([45, 255, 255])
+    rail_hsv_lo: np.ndarray = field(default_factory=lambda: np.array([10, 40, 40])) # broadened for night/dark video rails
+    rail_hsv_hi: np.ndarray = field(default_factory=lambda: np.array([45, 255, 255]))
     roi_min_points: int = 15
     roi_halfwidth_frac: float = 0.15  # Tighter bounding box around the rails
     roi_hypo_band_frac: float = 0.05
@@ -110,7 +185,14 @@ class TrackedObject:
 def run_status_detector(video_path, min_area=200, max_area=7000, max_distance=60,
                         sustained_secs=2, belt_angle=None, angle_threshold=20,
                         var_threshold=16, use_clahe=False, brightness_gamma=1.0, max_missing=15,
-                        roi_str=None):
+                        roi_str=None, save_roof_overlays=False, show_video=False):
+    # Belt type classifier initialized; classification deferred until belt connects
+    belt_classifier = BeltTypeClassifier()
+    belt_type = BeltType.UNKNOWN
+    belt_classified = False
+    belt_connected = False
+
+    # ── STAGE 2 & 3: Auto ROI + Status Detection ─────────────────────────
     print(f"Running Status Detector on {video_path}")
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -152,13 +234,6 @@ def run_status_detector(video_path, min_area=200, max_area=7000, max_distance=60
         f.write("event_id,status,video_timestamp,frame_number,snapshot\n")
     event_count = 0
     print(f"Events will be logged to: {events_csv}")
-
-    # Event merge: suppress duplicate events of the same type within this gap
-    EVENT_MERGE_GAP_SECS = 10.0
-    last_event_time = {}   # {"LOADING": timestamp, "UNLOADING": timestamp}
-    last_event_id = {}     # {"LOADING": event_count, "UNLOADING": event_count}
-
-    raw_events = []
 
     # Variables for periodic auto-ROI
     belt_detector = BeltDetector(AutoROIConfig())
@@ -203,30 +278,11 @@ def run_status_detector(video_path, min_area=200, max_area=7000, max_distance=60
                     print("Invalid ROI coordinates length. Falling back to manual selection.")
                     roi_poly = select_belt_roi(frame)
             else:
-                # Default hardcoded ROIs per video to guarantee perfection
-                video_filename = os.path.basename(video_path)
-                default_rois = {
-                    'conv_full_D01.mp4': '47,167 405,109 422,216 65,275',
-                    'conv_full_D02.mp4': '61,112 300,76 258,4 50,66',
-                    'conv_full_D03.mp4': '61,112 300,76 258,4 50,66',
-                    'conv_full_N01.mp4': '38,131 191,55 165,30 21,98',
-                    'conv_full_N03.mp4': '12,143 166,73 137,39 3,101',
-                }
-                if video_filename in default_rois:
-                    print(f"Using perfectly aligned default ROI for {video_filename}!")
-                    coords = default_rois[video_filename].replace(" ", ",").split(",")
-                    coords = [int(v) for v in coords if v]
-                    roi_poly = np.array([
-                        [coords[0], coords[1]],
-                        [coords[2], coords[3]],
-                        [coords[4], coords[5]],
-                        [coords[6], coords[7]]
-                    ], dtype=np.int32)
-                else:
-                    roi_poly = select_belt_roi(frame)
+                roi_poly = select_belt_roi(frame)
             
             if roi_poly is not None:
                 current_belt_roi = polygon_to_belt_roi(roi_poly)
+                belt_connected = True
                 
                 # Only lock the ROI if the user explicitly provided it via command line
                 if roi_str is not None:
@@ -243,15 +299,17 @@ def run_status_detector(video_path, min_area=200, max_area=7000, max_distance=60
                 print("No manual ROI selected. Automatic detection enabled.")
 
         # --- PERIODIC AUTO ROI ---
-        if not manual_roi_locked and t >= next_redetect_t:
+        if not manual_roi_locked and (not belt_connected or t >= next_redetect_t):
             roi_buffer.append(frame.copy())
             if len(roi_buffer) >= belt_detector.cfg.roi_sample_frames:
+                sample_frames_for_class = list(roi_buffer)
                 new_belt = belt_detector.detect(roi_buffer, previous=current_belt_roi)
                 roi_buffer = []
                 next_redetect_t = t + 10.0  # Force 10 second update
                 
                 if new_belt is not None:
                     current_belt_roi = new_belt
+                    belt_connected = True
                     roi_poly = current_belt_roi.box_points().astype(np.int32)
                     roi_mask = np.zeros(frame.shape[:2], dtype=np.uint8)
                     cv2.fillPoly(roi_mask, [roi_poly], 255)
@@ -262,6 +320,34 @@ def run_status_detector(video_path, min_area=200, max_area=7000, max_distance=60
                 else:
                     if current_belt_roi is None and frame_count < fps * 2:
                         print("Initial auto-detection failed, will retry...")
+
+        # --- CHECK IF BELT IS ROOFED OR OPEN ONCE CONNECTED ---
+        if belt_connected and not belt_classified and current_belt_roi is not None:
+            print(f"[pipeline] Belt connected! Running Stage 1: Classifying belt type...")
+            classification = belt_classifier.classify_from_roi(
+                sample_frames_for_class if 'sample_frames_for_class' in locals() and sample_frames_for_class else [frame],
+                current_belt_roi,
+                video_path,
+                save_overlays=save_roof_overlays
+            )
+            belt_type = classification.belt_type
+            belt_classified = True
+            print(f"[pipeline] Belt type: {belt_type.value} (confidence={classification.confidence:.2f})")
+            if belt_type == BeltType.ROOFED:
+                print("[pipeline] Roofed belt detected — Baggage detection will be disabled.")
+            elif belt_type == BeltType.OPEN:
+                print("[pipeline] Open belt detected — Baggage detection enabled.")
+
+        # --- WAIT FOR BELT TO CONNECT BEFORE STATUS DETECTION ---
+        if not belt_connected or current_belt_roi is None:
+            # We do not count baggage or change status until the conveyor belt is connected!
+            frame_count += 1
+            continue
+
+        # --- DISABLE BAGGAGE DETECTION FOR ROOFED BELTS ---
+        if belt_classified and belt_type == BeltType.ROOFED:
+            print("[pipeline] Roofed belt detected. Stopping detection immediately.")
+            break
 
         # Apply Gamma Correction for night videos
         if gamma_lut is not None:
@@ -527,27 +613,15 @@ def run_status_detector(video_path, min_area=200, max_area=7000, max_distance=60
                 
         # ── Event detection: IDLE → LOADING / UNLOADING ──────────────────
         if prev_status == "IDLE" and status in ("LOADING", "UNLOADING"):
+            event_count += 1
             ts_str = f"{int(video_secs//3600):02d}:{int((video_secs%3600)//60):02d}:{video_secs%60:05.2f}"
+            event_snapshot = os.path.join(event_dir, f"event_{event_count:03d}_{status}_{ts_str.replace(':','').replace('.','')}.jpg")
+            cv2.imwrite(event_snapshot, frame)
             
-            # Check if this should be merged with a recent event of the same type
-            prev_t = last_event_time.get(status, -999)
-            if (video_secs - prev_t) < EVENT_MERGE_GAP_SECS:
-                # Merge: same type fired within the gap — skip creating a new event
-                print(f"[EVENT] {status} at {ts_str} merged into event #{last_event_id[status]} (within {EVENT_MERGE_GAP_SECS}s gap)")
-                last_event_time[status] = video_secs
-            else:
-                # New distinct event
-                event_count += 1
-                event_snapshot = os.path.join(event_dir, f"event_{event_count:03d}_{status}_{ts_str.replace(':','').replace('.','')}.jpg")
-                cv2.imwrite(event_snapshot, frame)
-                
-                print(f"[EVENT #{event_count}] {status} started at {ts_str} (frame {frame_count}) → {event_snapshot}")
-                
-                with open(events_csv, 'a') as f:
-                    f.write(f"{event_count},{status},{ts_str},{frame_count},{event_snapshot}\n")
-                
-                last_event_time[status] = video_secs
-                last_event_id[status] = event_count
+            print(f"[EVENT #{event_count}] {status} started at {ts_str} (frame {frame_count}) → {event_snapshot}")
+            
+            with open(events_csv, 'a') as f:
+                f.write(f"{event_count},{status},{ts_str},{frame_count},{event_snapshot}\n")
 
         prev_status = status
         # ─────────────────────────────────────────────────────────────────
@@ -564,13 +638,16 @@ def run_status_detector(video_path, min_area=200, max_area=7000, max_distance=60
         time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}.{int((t % 1) * 100):02d}"
         cv2.putText(frame, f"Time: {time_str}", (10, 115), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
             
-        cv2.imshow('Status Detector', frame)
-        
+        if show_video:
+            cv2.imshow('Status Detector', frame)
+            key = cv2.waitKey(frame_delay) & 0xFF
+        else:
+            key = 0xFF
+            
         if frame_count % 30 == 0:
             os.makedirs("output_frames", exist_ok=True)
             cv2.imwrite(os.path.join("output_frames", f"output_{frame_count:04d}.jpg"), frame)
-        
-        key = cv2.waitKey(frame_delay) & 0xFF
+            
         if key == ord('q'):
             break
         elif key == ord('s'):
@@ -602,7 +679,44 @@ def run_status_detector(video_path, min_area=200, max_area=7000, max_distance=60
         
     cap.release()
     cv2.destroyAllWindows()
-    print("Status detection finished.")
+    
+    # ── Post-processing: Filter Events ──
+    def parse_time(ts_str):
+        parts = ts_str.split(':')
+        return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+
+    def format_time(total_seconds):
+        h = int(total_seconds // 3600)
+        m = int((total_seconds % 3600) // 60)
+        s = total_seconds % 60
+        return f"{h:02d}:{m:02d}:{s:05.2f}"
+
+    raw_events_for_filter = []
+    if os.path.exists(events_csv):
+        with open(events_csv, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                raw_events_for_filter.append({
+                    "timestamp": parse_time(row["video_timestamp"]),
+                    "event_type": row["status"]
+                })
+                
+    filtered = filter_events(
+        raw_events_for_filter, 
+        window_size_seconds=30.0, 
+        min_detections_in_window=2, 
+        merge_gap_seconds=15.0
+    )
+    
+    filtered_events_csv = os.path.join(event_dir, "filtered_events.csv")
+    with open(filtered_events_csv, 'w') as f:
+        f.write("event_id,event_type,start_time,end_time,duration_seconds,detection_count\n")
+        for i, ev in enumerate(filtered, 1):
+            duration = ev['end_time'] - ev['start_time']
+            f.write(f"{i},{ev['event_type']},{format_time(ev['start_time'])},{format_time(ev['end_time'])},{duration:.2f},{ev['detection_count']}\n")
+            
+    print(f"Status detection finished. Filtered {len(raw_events_for_filter)} raw events into {len(filtered)} clean events.")
+    print(f"Saved to: {filtered_events_csv}")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -624,6 +738,10 @@ if __name__ == '__main__':
                         help="Gamma correction for night videos. >1.0 makes dark areas brighter (e.g. 1.5 to 2.0). Default 1.0.")
     parser.add_argument('--roi', type=str, default=None,
                         help="Optional exact 4-point polygon ROI as 'X1,Y1 X2,Y2 X3,Y3 X4,Y4'")
+    parser.add_argument('--save_roof_overlays', action='store_true', default=True,
+                        help="Save diagnostic overlay images from belt type classification to roof_detection_output/")
+    parser.add_argument('--show_video', action='store_true',
+                        help="Show real-time video playback window (will run at 1x speed)")
     args = parser.parse_args()
 
     run_status_detector(
@@ -638,4 +756,6 @@ if __name__ == '__main__':
         brightness_gamma=args.brightness_gamma,
         max_missing=args.max_missing,
         roi_str=args.roi,
+        save_roof_overlays=args.save_roof_overlays,
+        show_video=args.show_video,
     )
