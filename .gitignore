@@ -1,4 +1,4 @@
-# ── Videos (too large for GitHub) ──────────────────────────────
+# ── Videos ──────────────────────────────
 videos/
 
 # ── Generated output directories ───────────────────────────────
@@ -31,7 +31,3 @@ env/
 # ── Logs & scratch ───────────────────────────────────────────────
 *.log
 scratch/
-
-# ── PDF / compiled reports ───────────────────────────────────────
-*.pdf
-sashiv_engineering_log.*
