@@ -1,33 +1,37 @@
-# Videos (too large for GitHub)
+# ── Videos (too large for GitHub) ──────────────────────────────
 videos/
 
-# Generated output
+# ── Generated output directories ───────────────────────────────
 output_frames/
 pipeline_output/
+roof_detection_output/
 
-# Scratch/debug files
-scratch/
-
-# macOS
-.DS_Store
-
-# Python
+# ── Python ──────────────────────────────────────────────────────
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
+*.egg-info/
+.eggs/
 
-# IDE
+# ── Virtual environments ─────────────────────────────────────────
+.venv/
+venv/
+env/
+
+# ── macOS ────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ── IDE ──────────────────────────────────────────────────────────
 .vscode/
 .idea/
 
-# Logs and HTML reports
-*.html
+# ── Logs & scratch ───────────────────────────────────────────────
 *.log
-sashiv_engineering_log.*
+scratch/
 
-# PDF reports
+# ── PDF / compiled reports ───────────────────────────────────────
 *.pdf
-
-# Virtual environments
-.venv/
-venv/
+sashiv_engineering_log.*
