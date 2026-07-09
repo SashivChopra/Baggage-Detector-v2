@@ -278,19 +278,29 @@ def run_status_detector(video_path, min_area=200, max_area=7000, max_distance=60
                     print("Invalid ROI coordinates length. Falling back to manual selection.")
                     roi_poly = select_belt_roi(frame)
             else:
-                roi_poly = select_belt_roi(frame)
+                choice = ""
+                while choice not in ['1', '2']:
+                    print("\n" + "="*50)
+                    print("ROI SELECTION MODE:")
+                    print("1. Manual ROI (Draw on screen)")
+                    print("2. Auto ROI (Detect automatically)")
+                    print("="*50)
+                    choice = input("Select an option [1 or 2]: ").strip()
+                
+                if choice == '1':
+                    roi_poly = select_belt_roi(frame)
+                else:
+                    roi_poly = None
             
             if roi_poly is not None:
                 current_belt_roi = polygon_to_belt_roi(roi_poly)
                 belt_connected = True
                 
-                # Only lock the ROI if the user explicitly provided it via command line
+                manual_roi_locked = True
                 if roi_str is not None:
-                    manual_roi_locked = True
                     print("Manual ROI locked from command line. Periodic auto-detection disabled.")
                 else:
-                    manual_roi_locked = False
-                    print("Initial ROI set. Periodic auto-detection is ENABLED.")
+                    print("Manual ROI locked from mouse selection. Periodic auto-detection disabled.")
                     
                 roi_mask = np.zeros(frame.shape[:2], dtype=np.uint8)
                 cv2.fillPoly(roi_mask, [roi_poly], 255)
