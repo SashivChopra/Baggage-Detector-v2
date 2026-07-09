@@ -50,41 +50,41 @@ It does this in three cooperating stages:
 
 ```
                          ┌─────────────────────────────┐
-                         │   status_detector.py (main)  │
-                         └───────────────┬───────────────┘
+                         │   status_detector.py (main) │
+                         └───────────────┬─────────────┘
                                           │
-                     ┌────────────────────┴─────────────────────┐
+                     ┌────────────────────┴───────────────────────┐
                      │ 1. Locate belt every frame until connected │
                      │    (or use --roi / manual click-selection) │
-                     └────────────────────┬─────────────────────┘
+                     └────────────────────┬───────────────────────┘
                                           │  BeltDetector.detect()
                                           ▼
                          ┌─────────────────────────────┐
-                         │      belt_detection.py       │
-                         │  yellow rails + Hough lines   │
-                         │  → robust Huber axis fit      │
-                         │  → BeltROI (rotated band)     │
-                         └───────────────┬───────────────┘
+                         │      belt_detection.py      │
+                         │  yellow rails + Hough lines │
+                         │  → robust Huber axis fit    │
+                         │  → BeltROI (rotated band)   │
+                         └───────────────┬─────────────┘
                                           │  ROI locked
                                           ▼
                          ┌─────────────────────────────┐
-                         │   belt_type_classifier.py     │
-                         │  canopy color % + railing %   │
-                         │  inside the ROI on a median    │
-                         │  background frame              │
-                         └───────────────┬───────────────┘
+                         │   belt_type_classifier.py   │
+                         │  canopy color % + railing % │
+                         │  inside the ROI on a median │
+                         │  background frame           │
+                         └───────────────┬─────────────┘
                              ROOFED ◄─────┴─────► OPEN
                         (stop, no tracking)   (continue)
                                                   │
                                                   ▼
-                         ┌─────────────────────────────┐
+                         ┌───────────────────────────────┐
                          │  status_detector.py (cont.)   │
                          │  MOG2 background subtraction  │
-                         │  → contour filtering            │
-                         │  → centroid tracking             │
-                         │  → LOADING / UNLOADING / IDLE     │
-                         │  → event CSV + snapshots           │
-                         └─────────────────────────────┘
+                         │  → contour filtering          │
+                         │  → centroid tracking          │
+                         │  → LOADING / UNLOADING / IDLE │
+                         │  → event CSV + snapshots      │
+                         └───────────────────────────────┘
 ```
 
 If the belt turns out to be **ROOFED**, `status_detector.py` prints a
