@@ -120,8 +120,9 @@ time).
   needed for `cv2.imshow`/mouse callbacks if you use `--show_video` or
   manual ROI selection. If you're running headless (e.g. on a server /
   in Docker / over SSH without X11), use `opencv-python-headless`
-  instead and always pass `--roi` so the manual-selection window is
-  never invoked.
+  instead and avoid `--show_video` or manual ROI selection. For
+  unattended runs, pass `--roi`; for interactive runs, choose Auto ROI
+  at the startup prompt.
 - NumPy
 - A video file of a conveyor-belt loader (airport ramp camera footage,
   `.mp4`/`.avi`/etc. — anything OpenCV's `VideoCapture` can open)
@@ -157,16 +158,23 @@ numpy>=1.24.0
 ```
 
 If you're deploying headless (no display), swap the first line for
-`opencv-python-headless` and always pass `--roi` (see [CLI
-reference](#cli-reference)) so the script never tries to open a GUI
-window for manual ROI selection.
+`opencv-python-headless` and avoid `--show_video` or manual ROI
+selection. For unattended runs, pass `--roi` (see [CLI
+reference](#cli-reference)); otherwise choose Auto ROI at the terminal
+prompt.
 
 ---
 
 ## Quick start
 
-Fully automatic — the script will auto-detect the belt, classify it, and
-start tracking:
+When you run `status_detector.py` without `--roi`, it asks you to choose
+the ROI mode at startup:
+
+- `1. Manual ROI` — draw the belt polygon yourself in the OpenCV window.
+- `2. Auto ROI` — let the script detect the belt automatically.
+
+For automatic ROI mode, choose `2. Auto ROI`. The script will auto-detect
+the belt, classify it, and start tracking:
 
 ```bash
 python status_detector.py --video path/to/ramp_footage.mp4
@@ -178,10 +186,9 @@ With a live preview window (runs at real-time playback speed):
 python status_detector.py --video path/to/ramp_footage.mp4 --show_video
 ```
 
-If auto-detection struggles on a difficult scene, click out the belt
-polygon yourself on the first frame (a window pops up automatically when
-no `--roi` is passed and auto-detection needs a hint), or pin down the
-exact ROI from a previous run's console output:
+If auto-detection struggles on a difficult scene, choose `1. Manual ROI`
+at startup and click out the belt polygon yourself, or pin down the exact
+ROI from a previous run's console output:
 
 ```bash
 python status_detector.py --video path/to/ramp_footage.mp4 \
@@ -294,12 +301,13 @@ to the first successful detection found at any offset.
 `status_detector.py` actually calls — it skips re-detection and
 classifies directly against an already-locked ROI.
 
-**Diagnostic overlays** (`--save_overlays` / `save_roof_overlays`):
-writes a JPEG per video to `roof_detection_output/<video_name>/` with
-the canopy pixels highlighted in cyan/green, exposed railings in
-orange, the ROI polygon in blue, and the classification result +
-ratios printed on the image — useful for eyeballing *why* a belt was
-classified the way it was.
+**Diagnostic overlays** (`save_overlays` in code, or
+`--save_roof_overlays` through `status_detector.py`): writes a JPEG per
+video to `roof_detection_output/<video_name>/` with the canopy pixels
+highlighted in cyan/green, exposed railings in orange, the ROI polygon
+in blue, and the classification result + ratios printed on the image —
+useful for eyeballing *why* a belt was classified the way it was. The
+standalone classifier CLI saves overlays by default.
 
 ### `status_detector.py` — Tracking, status, and events
 
@@ -394,7 +402,7 @@ episode — is written to `filtered_events.csv`.
 | `--max_missing` | `15` | Frames a track can go undetected before being dropped; raise for transparent-cover belts |
 | `--use_clahe` | off | Apply CLAHE contrast boost pre-detection (helps see through glass covers) |
 | `--brightness_gamma` | `1.0` | Gamma correction; >1.0 brightens shadows — useful for night footage |
-| `--roi` | `None` | Exact 4-point polygon `"x1,y1 x2,y2 x3,y3 x4,y4"` to skip auto-detection and manual selection entirely |
+| `--roi` | `None` | Exact 4-point polygon `"x1,y1 x2,y2 x3,y3 x4,y4"`; when provided, skips the startup Manual ROI / Auto ROI prompt |
 | `--save_roof_overlays` | `True` | Save the belt-type diagnostic overlay JPEG |
 | `--show_video` | off | Show a live playback window (runs at real-time speed; needed for the `s` reference-selection key) |
 
@@ -466,8 +474,9 @@ output_frames/
   import at load time. Keep all three files together in one directory.
 - Manual ROI selection and `--show_video` both require an OpenCV build
   with GUI support (`opencv-python`, not `opencv-python-headless`) and
-  an available display. On headless servers, always pass `--roi`
-  explicitly.
+  an available display. On headless unattended runs, pass `--roi`
+  explicitly; on headless interactive runs, choose Auto ROI at the
+  terminal prompt.
 - The tracker is a simple greedy nearest-centroid matcher, not a
   Kalman/Hungarian-algorithm tracker — it works well for the
   sparse, slow-moving bag scenario here but isn't a general-purpose
